@@ -9,12 +9,14 @@ from werkzeug.exceptions import BadRequest
 
 app = Flask(__name__)
 
-# Configure CORS
+# Configure CORS - Allow all origins for development
+# For production, replace "*" with your specific domain(s)
 CORS(app, resources={
     r"/*": {
-        "origins": "*",  # Allow all origins (change to specific domains in production)
+        "origins": "*",  # Change to ["https://yourdomain.com"] in production
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+        "supports_credentials": False
     }
 })
 
