@@ -23,16 +23,24 @@ CORS(app, resources={
 class TikTokAPI:
     def __init__(self):
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        self.api_url = "https://tikwm.com/api/"
+        # Multiple API endpoints for fallback
+        self.api_endpoints = [
+            "https://tikwm.com/api/",
+            "https://www.tikwm.com/api/",
+            "https://api.tikwm.com/api/"
+        ]
 
     def extract_video_id(self, url):
         """Extract video ID from TikTok URL"""
         patterns = [
             r'(?:https?://)?(?:www\.)?tiktok\.com/@[\w.-]+/video/(\d+)',
             r'(?:https?://)?(?:vm\.tiktok\.com|vt\.tiktok\.com)/(\w+)',
-            r'(?:https?://)?(?:www\.)?tiktok\.com/t/(\w+)'
+            r'(?:https?://)?(?:www\.)?tiktok\.com/t/(\w+)',
+            r'(?:https?://)?(?:m\.)?tiktok\.com/@[\w.-]+/video/(\d+)',
+            r'tiktok\.com.*?/video/(\d+)',
+            r'/video/(\d+)'
         ]
 
         for pattern in patterns:
@@ -41,26 +49,117 @@ class TikTokAPI:
                 return match.group(1)
         return None
 
+    def normalize_url(self, url):
+        """Normalize TikTok URL to standard format"""
+        # If it's a short URL, try to expand it first
+        if 'vm.tiktok.com' in url or 'vt.tiktok.com' in url or 'tiktok.com/t/' in url:
+            try:
+                response = requests.head(url, allow_redirects=True, timeout=10)
+                url = response.url
+            except:
+                pass
+        
+        # Ensure URL has protocol
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+            
+        return url
+
     def get_video_info(self, url):
-        """Get video information from TikTok URL"""
+        """Get video information from TikTok URL with multiple fallback methods"""
+        # Normalize the URL first
+        normalized_url = self.normalize_url(url)
+        
+        # Try each API endpoint
+        for api_url in self.api_endpoints:
+            try:
+                print(f"Trying API: {api_url}")
+                params = {
+                    'url': normalized_url,
+                    'hd': '1'
+                }
+
+                response = requests.get(
+                    api_url, 
+                    params=params, 
+                    headers=self.headers, 
+                    timeout=15,
+                    verify=False  # Some APIs might have SSL issues
+                )
+                
+                print(f"Response status: {response.status_code}")
+                print(f"Response content: {response.text[:500]}...")
+                
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get('code') == 0 and data.get('data'):
+                    print("Success! Got video data")
+                    return data.get('data')
+                elif data.get('code') == -1:
+                    print(f"API returned error: {data.get('msg', 'Unknown error')}")
+                    continue
+                else:
+                    print(f"Unexpected response code: {data.get('code')}")
+                    continue
+
+            except requests.exceptions.RequestException as e:
+                print(f"Request error with {api_url}: {str(e)}")
+                continue
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error with {api_url}: {str(e)}")
+                continue
+            except Exception as e:
+                print(f"Unexpected error with {api_url}: {str(e)}")
+                continue
+
+        # If all APIs fail, try alternative method
+        return self.get_video_info_alternative(normalized_url)
+
+    def get_video_info_alternative(self, url):
+        """Alternative method to get video info"""
         try:
-            params = {
-                'url': url,
-                'hd': '1'
-            }
-
-            response = requests.get(self.api_url, params=params, headers=self.headers, timeout=10)
-            response.raise_for_status()
-
-            data = response.json()
-
-            if data.get('code') == 0:
-                return data.get('data')
-            else:
-                return None
-
+            # Try different API service
+            alt_api = "https://tikmate.online/api/v1/video/details"
+            response = requests.post(
+                alt_api,
+                json={"url": url},
+                headers=self.headers,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success'):
+                    return self.format_alternative_data(data.get('data', {}))
+                    
         except Exception as e:
-            return None
+            print(f"Alternative API failed: {str(e)}")
+            
+        return None
+
+    def format_alternative_data(self, data):
+        """Format data from alternative API to match expected structure"""
+        return {
+            'id': data.get('id'),
+            'title': data.get('title', ''),
+            'duration': data.get('duration'),
+            'author': {
+                'unique_id': data.get('author', {}).get('username'),
+                'nickname': data.get('author', {}).get('nickname'),
+                'avatar': data.get('author', {}).get('avatar')
+            },
+            'play_count': data.get('stats', {}).get('views'),
+            'digg_count': data.get('stats', {}).get('likes'),
+            'comment_count': data.get('stats', {}).get('comments'),
+            'share_count': data.get('stats', {}).get('shares'),
+            'create_time': data.get('created_at'),
+            'play': data.get('video_url'),
+            'music': data.get('audio_url'),
+            'cover': data.get('thumbnail'),
+            'origin_cover': data.get('thumbnail'),
+            'dynamic_cover': data.get('thumbnail')
+        }
 
     def sanitize_filename(self, filename):
         """Remove invalid characters from filename"""
@@ -142,12 +241,34 @@ def get_info():
                 "message": "Please provide a TikTok URL"
             }), 400
 
-        # Get video info
+        print(f"Received URL: {url}")
+        
+        # Validate URL format
+        if 'tiktok.com' not in url and 'vm.tiktok.com' not in url and 'vt.tiktok.com' not in url:
+            return jsonify({
+                "error": "Invalid TikTok URL",
+                "message": "Please provide a valid TikTok URL"
+            }), 400
+
+        # Get video info with detailed logging
         video_info = tiktok_api.get_video_info(url)
         if not video_info:
             return jsonify({
                 "error": "Failed to fetch video information",
-                "message": "Invalid URL or video not accessible"
+                "message": "The video might be private, deleted, or the URL is invalid. Please check the URL and try again.",
+                "troubleshooting": {
+                    "tips": [
+                        "Make sure the TikTok video is public",
+                        "Try copying the URL directly from TikTok app/website",
+                        "Check if the video still exists",
+                        "Try with a different TikTok video URL to test the API"
+                    ],
+                    "supported_formats": [
+                        "https://www.tiktok.com/@username/video/1234567890123456789",
+                        "https://vm.tiktok.com/ZMxxxxxx/",
+                        "https://vt.tiktok.com/ZSxxxxxx/"
+                    ]
+                }
             }), 404
 
         # Extract relevant information
@@ -188,9 +309,11 @@ def get_info():
         return jsonify(info)
 
     except Exception as e:
+        print(f"Error in get_info: {str(e)}")
         return jsonify({
             "error": "Internal server error",
-            "message": str(e)
+            "message": str(e),
+            "debug_info": "Check server logs for more details"
         }), 500
 
 @app.route('/download/video', methods=['GET'])
@@ -432,14 +555,46 @@ def download_audio():
             "message": str(e)
         }), 500
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "healthy",
-        "message": "TikTok Downloader API is running",
-        "cors_enabled": True
-    })
+@app.route('/test', methods=['GET'])
+def test_api():
+    """Test endpoint to debug API issues"""
+    try:
+        url = request.args.get('url', 'https://www.tiktok.com/@selenagomez/video/7001245956863126789')
+        
+        # Test URL validation
+        video_id = tiktok_api.extract_video_id(url)
+        normalized_url = tiktok_api.normalize_url(url)
+        
+        # Test each API endpoint
+        results = []
+        for api_url in tiktok_api.api_endpoints:
+            try:
+                params = {'url': normalized_url, 'hd': '1'}
+                response = requests.get(api_url, params=params, headers=tiktok_api.headers, timeout=10)
+                results.append({
+                    "api": api_url,
+                    "status": response.status_code,
+                    "response_preview": response.text[:200] + "..." if len(response.text) > 200 else response.text
+                })
+            except Exception as e:
+                results.append({
+                    "api": api_url,
+                    "error": str(e)
+                })
+        
+        return jsonify({
+            "test_url": url,
+            "video_id": video_id,
+            "normalized_url": normalized_url,
+            "api_tests": results,
+            "headers_used": tiktok_api.headers
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Test failed",
+            "message": str(e)
+        }), 500
 
 @app.errorhandler(404)
 def not_found(error):
