@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, Response, stream_with_context
+from flask_cors import CORS
 import requests
 import re
 import json
@@ -7,6 +8,15 @@ import io
 from werkzeug.exceptions import BadRequest
 
 app = Flask(__name__)
+
+# Configure CORS
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",  # Allow all origins (change to specific domains in production)
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
+    }
+})
 
 class TikTokAPI:
     def __init__(self):
@@ -67,6 +77,7 @@ def home():
         "name": "TikTok Downloader API",
         "version": "1.0",
         "description": "Download TikTok videos and audio without saving on server",
+        "cors_enabled": True,
         "endpoints": {
             "/info": {
                 "method": "GET",
@@ -231,7 +242,8 @@ def download_video():
             mimetype='video/mp4',
             headers={
                 'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Type': 'video/mp4'
+                'Content-Type': 'video/mp4',
+                'Access-Control-Allow-Origin': '*'
             }
         )
 
@@ -345,7 +357,8 @@ def download_thumbnail():
             mimetype='image/jpeg',
             headers={
                 'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Type': 'image/jpeg'
+                'Content-Type': 'image/jpeg',
+                'Access-Control-Allow-Origin': '*'
             }
         )
 
@@ -406,7 +419,8 @@ def download_audio():
             mimetype='audio/mpeg',
             headers={
                 'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Type': 'audio/mpeg'
+                'Content-Type': 'audio/mpeg',
+                'Access-Control-Allow-Origin': '*'
             }
         )
 
@@ -421,7 +435,8 @@ def health_check():
     """Health check endpoint"""
     return jsonify({
         "status": "healthy",
-        "message": "TikTok Downloader API is running"
+        "message": "TikTok Downloader API is running",
+        "cors_enabled": True
     })
 
 @app.errorhandler(404)
@@ -439,7 +454,8 @@ def internal_error(error):
     }), 500
 
 if __name__ == '__main__':
-    print("🚀 Starting TikTok Downloader API...")
+    print("🚀 Starting TikTok Downloader API with CORS enabled...")
+    print("🌐 CORS: Enabled for all origins")
     print("📚 API Documentation: http://localhost:5000/")
     print("🔍 Get Info: http://localhost:5000/info?url=TIKTOK_URL")
     print("📹 Download Video: http://localhost:5000/download/video?url=TIKTOK_URL")
