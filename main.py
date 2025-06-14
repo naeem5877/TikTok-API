@@ -6,6 +6,7 @@ import json
 from urllib.parse import quote, unquote
 import io
 from werkzeug.exceptions import BadRequest
+import unicodedata
 
 app = Flask(__name__)
 
@@ -62,11 +63,61 @@ class TikTokAPI:
             return None
 
     def sanitize_filename(self, filename):
-        """Remove invalid characters from filename"""
-        invalid_chars = '<>:"/\\|?*'
+        """Remove invalid characters from filename and handle Unicode properly"""
+        if not filename:
+            return "video"
+
+        # Normalize Unicode characters
+        try:
+            filename = unicodedata.normalize('NFKD', filename)
+        except:
+            pass
+
+        # Remove or replace invalid characters
+        invalid_chars = '<>:"/\\|?*@#$%^&()[]{}~`'
         for char in invalid_chars:
             filename = filename.replace(char, '_')
-        return filename[:100]
+
+        # Remove any non-ASCII characters that might cause issues
+        filename = ''.join(char if ord(char) < 128 else '_' for char in filename)
+
+        # Replace multiple underscores with single underscore
+        filename = re.sub(r'_+', '_', filename)
+
+        # Remove leading/trailing underscores and spaces
+        filename = filename.strip('_ ')
+
+        # Limit length
+        if len(filename) > 50:
+            filename = filename[:50]
+
+        # Ensure we have a valid filename
+        if not filename or filename == '_':
+            filename = "video"
+
+        return filename
+
+    def create_safe_filename(self, title, author, video_id, extension):
+        """Create a safe filename for downloads with VibeDownloader.me branding"""
+        safe_title = self.sanitize_filename(title) if title else "TikTok_Video"
+        safe_author = self.sanitize_filename(author) if author else "user"
+        safe_id = re.sub(r'[^a-zA-Z0-9]', '', str(video_id)) if video_id else "unknown"
+
+        # Create filename with VibeDownloader.me branding
+        filename = f"VibeDownloader.me - {safe_title}.{extension}"
+
+        # Final check - if still too long or problematic, use a simpler format
+        if len(filename) > 100:
+            # Truncate title if too long
+            max_title_length = 100 - len(f"VibeDownloader.me - .{extension}")
+            truncated_title = safe_title[:max_title_length] if len(safe_title) > max_title_length else safe_title
+            filename = f"VibeDownloader.me - {truncated_title}.{extension}"
+
+        # If still problematic, use fallback
+        if not filename.replace('.', '').replace('_', '').replace('-', '').replace(' ', '').isalnum():
+            filename = f"VibeDownloader.me - {safe_id}.{extension}"
+
+        return filename
 
 # Initialize TikTok API
 tiktok_api = TikTokAPI()
@@ -217,13 +268,12 @@ def download_video():
                 "message": "This video may not be available for download"
             }), 404
 
-        # Generate filename
-        title = video_info.get('title', 'TikTok Video')
-        author = video_info.get('author', {}).get('unique_id', 'unknown')
-        video_id = video_info.get('id', 'unknown')
+        # Generate safe filename
+        title = video_info.get('title', '')
+        author = video_info.get('author', {}).get('unique_id', '')
+        video_id = video_info.get('id', '')
 
-        safe_title = tiktok_api.sanitize_filename(title)
-        filename = f"{author}_{safe_title}_{video_id}.mp4"
+        filename = tiktok_api.create_safe_filename(title, author, video_id, 'mp4')
 
         # Stream the video file
         def generate():
@@ -331,13 +381,12 @@ def download_thumbnail():
                 "message": "This video may not have available thumbnails"
             }), 404
 
-        # Generate filename
-        title = video_info.get('title', 'TikTok Thumbnail')
-        author = video_info.get('author', {}).get('unique_id', 'unknown')
-        video_id = video_info.get('id', 'unknown')
+        # Generate safe filename
+        title = video_info.get('title', '')
+        author = video_info.get('author', {}).get('unique_id', '')
+        video_id = video_info.get('id', '')
 
-        safe_title = tiktok_api.sanitize_filename(title)
-        filename = f"{author}_{safe_title}_{video_id}_{quality}.jpg"
+        filename = tiktok_api.create_safe_filename(title, author, video_id, 'jpg')
 
         # Stream the thumbnail file
         def generate():
@@ -392,13 +441,12 @@ def download_audio():
                 "message": "This video may not have extractable audio"
             }), 404
 
-        # Generate filename
-        title = video_info.get('title', 'TikTok Audio')
-        author = video_info.get('author', {}).get('unique_id', 'unknown')
-        video_id = video_info.get('id', 'unknown')
+        # Generate safe filename
+        title = video_info.get('title', '')
+        author = video_info.get('author', {}).get('unique_id', '')
+        video_id = video_info.get('id', '')
 
-        safe_title = tiktok_api.sanitize_filename(title)
-        filename = f"{author}_{safe_title}_{video_id}.mp3"
+        filename = tiktok_api.create_safe_filename(title, author, video_id, 'mp3')
 
         # Stream the audio file
         def generate():
